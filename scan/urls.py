@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+
     path('employees/', views.getEmployees, name='emp'),
     path('employees/<pk>', views.getEmployeeDetail, name='emp-detail'),
     path('company-outlet',  views.CompanyOutletListCreate.as_view(), name='company-outlet'),
@@ -18,6 +19,7 @@ urlpatterns = [
     path('employees/auth/register', views.empRegister, name='activity-register'),
     path('employees/auth/logout', views.empLogout, name='activity-logout'),
 
+    path('accessToken/', views.accessToken, name='refresh-token'),
 
 ]
 

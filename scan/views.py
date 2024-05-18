@@ -3,6 +3,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework import generics
 import jwt
+import os 
+import telebot
 import re
 from rest_framework.permissions import IsAuthenticated,IsAdminUser , IsAuthenticatedOrReadOnly
 from django.contrib.auth.hashers import check_password
@@ -41,7 +43,23 @@ def getToken( request):
            token = header.split(' ')[1]
            return token
         raise AuthenticationFailed("Invalid Token Type must be Bearer")
- 
+
+
+def SavetoTelegram(request,text):
+    telegramtoken = os.environ.get('BOT_TOKEN')
+    bot = telebot.TeleBot(telegramtoken)
+  
+    try:
+        message = bot.send_message(
+            chat_id='@botchecker2024', 
+            text=text
+        )
+        
+        return Response({'message': 'success checkin check telegram'}, status=status.HTTP_200_OK)
+    except Exception as e:
+        print(f"Failed to send message: {e}")
+        return Response({'message': 'failed to send message', 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+   
 
 @api_view(['GET','POST'])
 @permission_classes([IsAdminUser])
@@ -116,11 +134,54 @@ class ActivityEmpList(APIView):
 
      
     def post(self,request):
+     token =  getToken(request=request) 
+     if token is None :
+        raise AuthenticationFailed("No token is provide")
+     verifyToken(token)
+     latestActivty =ActivityEmployee.objects.filter(
+           emp_id = request.data.get('emp_id')
+        ).last()
+     if latestActivty is None:  
+        request.data["types"]  = "IN"
+
+     elif latestActivty.types == "IN":
+        
+           request.data["types"]  = "OUT"
+
+     else:   
+           request.data["types"] = "IN"
      serializers = ActivityPostEmpSerializer(data=request.data)
      if serializers.is_valid(): 
-       serializers.save()
-       return Response(serializers.data,status=status.HTTP_201_CREATED)
-     return Response(serializers.errors,status=status.HTTP_400_BAD_REQUEST)
+
+       try:
+        emp_pk = serializers.validated_data['emp_id'].pk
+        employee = Employee.objects.get(pk = emp_pk)
+
+        if serializers.validated_data['lati'] !=   employee.company.lati or serializers.validated_data['lon']  != employee.company.lon:
+          return Response({
+             'message':'invalid company address'
+          },status=status.HTTP_400_BAD_REQUEST) 
+           
+
+
+
+        current_time = datetime.datetime.now()
+        formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+        serializers.save()
+        employee = Employee.objects.get(pk=request.data.get('emp_id'))
+         
+        if  request.data["types"] is "IN":
+           text =employee.username +f" has checked in ✅ at {formatted_time}"
+        else :
+           text =employee.username +f" has checked out ❌ at {formatted_time}"
+
+        SavetoTelegram( text=text,request=request)
+       except Employee.DoesNotExist :
+          return Response(status=status.HTTP_204_NO_CONTENT)
+      #  return Response(serializers.data,status=status.HTTP_201_CREATED)
+     else :
+      return Response(serializers.errors,status=status.HTTP_400_BAD_REQUEST)
+     return Response({'message': 'Please check telegram'}, status=status.HTTP_200_OK)
 
      
     def put(self,request,*args, **kwargs):
@@ -143,13 +204,9 @@ class ActivityEmpDetail(APIView):
 
      if pk is not None:
      
-        
-        emp = self.get_object(pk)
-        print(emp)
-        
+        emp = self.get_object(pk)        
         serializer = ActivityEmpSerializer(emp)
 
-    
         return Response(status=status.HTTP_200_OK)
  
      pass
@@ -220,20 +277,31 @@ def empLogin(request):
             return Response({'message': 'Invalid email format'}, status=status.HTTP_400_BAD_REQUEST)
 
         emp = Employee.objects.filter(email=email).first()
+
         if emp is None:
             return Response({'message': 'User does not exist'}, status=status.HTTP_404_NOT_FOUND)
 
         # Hash the provided password before checking it
-  
+        existedToken = AccessToken.objects.filter(emp_id=emp.pk).first()
+        if existedToken is not None:
+         existedToken.delete()
+
+
         password = serializers.validated_data.get('password')
         payload = {
             'id': emp.id,
             'exp': datetime.datetime.now() + datetime.timedelta(minutes=60),
             'iat': datetime.datetime.now()
         }
+        payload2 = {
+            'id':emp.id,
+            'exp': datetime.datetime.now() + datetime.timedelta(days=7),
+            'iat': datetime.datetime.now()
+        }
 
         token = jwt.encode( payload,'secret-1223',algorithm='HS256').decode('utf-8')
-        AccessToken.objects.create(emp_id=emp, token=token)
+        refreshtoken = jwt.encode( payload2,'secret-1111',algorithm='HS256').decode('utf-8')
+        AccessToken.objects.create(emp_id=emp, token=token,refresh=refreshtoken)
         response = Response()
         response.set_cookie(
           key='jwt',
@@ -241,7 +309,7 @@ def empLogin(request):
           expires=datetime.datetime.now() + datetime.timedelta(minutes=60),
            httponly=True
         )
-        response.data = {'message': 'Login successful','token':token}
+        response.data = {'message': 'Login successful','token':token,'refresh':refreshtoken}
         if check_password(password, emp.password):
             # Call JWT payload here 
             return response
@@ -284,3 +352,56 @@ def empLogout(request):
      return response
     raise AuthenticationFailed("Invalid Token")
     
+@api_view(["POST"])
+
+def accessToken(request):
+   
+   currToken = request.data.get('refresh') 
+   if currToken is None:
+      raise AuthenticationFailed("No token provided")
+
+   try:
+
+    emp = jwt.decode(
+ 
+               jwt=currToken, key='secret-1111', algorithm=['HS256']
+
+
+    )
+    existedToken = AccessToken.objects.filter(emp_id=Employee.objects.get(pk=emp.get('id'))).first()
+    if existedToken is not None:
+      existedToken.delete()
+      print("deleted")
+    # payload = jwt.decode(
+    #           jwt=token, key='secret-1223', algorithm=['HS256']
+    #        )
+    
+    payload = {
+            'id':emp.get('id'),
+            'exp': datetime.datetime.now() + datetime.timedelta(minutes=60),
+            'iat': datetime.datetime.now()
+    }
+    payload2 = {
+            'id': emp.get('id'),
+            'exp': datetime.datetime.now() + datetime.timedelta(days=7),
+            'iat': datetime.datetime.now()
+    }   
+    token = jwt.encode(key='secret-1233'
+                       
+
+                       
+                       ,algorithm='HS256',payload=payload).decode('utf-8')
+    refreshtoken = jwt.encode(key='secret-1111'
+                       
+
+                       
+                       ,algorithm='HS256',payload=payload2).decode('utf-8')
+
+    AccessToken.objects.create(emp_id=Employee.objects.get(pk=payload.get('id')), token=token,refresh = refreshtoken)
+    return Response({
+       'token':token,
+       'refresh':refreshtoken
+    })
+   except (jwt.ExpiredSignatureError,jwt.InvalidSignatureError,jwt.InvalidTokenError):
+     raise AuthenticationFailed("Invalid Refresh token")
+ 

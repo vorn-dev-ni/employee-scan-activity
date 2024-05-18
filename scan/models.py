@@ -82,7 +82,7 @@ related_name="activities",
 on_delete=models.CASCADE
  )
  
- date = models.DateField(null=True,blank=True)
+ date = models.DateField(null=True,blank=True,auto_now_add=True)
  times = models.TimeField(blank=False,null=False)
  types = models.CharField(
         max_length=5,
@@ -102,4 +102,5 @@ on_delete=models.CASCADE
 class AccessToken(models.Model):
     emp_id = models.ForeignKey(Employee, on_delete=models.CASCADE)
     token = models.CharField(max_length=500)
+    refresh = models.CharField(max_length=500,null=True,blank=True) 
     created_at = models.DateTimeField(auto_now_add=True)

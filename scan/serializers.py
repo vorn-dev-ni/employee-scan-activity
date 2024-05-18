@@ -73,4 +73,7 @@ class ActivityPostEmpSerializer (serializers.ModelSerializer):
 
     class Meta:
         model = ActivityEmployee
-        fields = ['emp_id','times','types']
+        fields = ['emp_id','times','types','lati','lon']
+
+
+        
